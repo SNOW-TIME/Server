@@ -40,6 +40,23 @@ class HTMLToExcelConverter:
         
         return html_files
     
+    def find_unconverted_files(self) -> List[str]:
+        """아직 변환되지 않은 HTML 파일들 찾기"""  # 수정: 새로운 메서드 추가
+        html_files = self.find_html_files()
+        unconverted_files = []
+        
+        for html_file in html_files:
+            # 변환된 파일명 생성
+            base_name = os.path.splitext(html_file)[0]
+            converted_name = f"{base_name}_converted.xlsx"
+            
+            # 변환된 파일이 존재하지 않으면 추가
+            if not os.path.exists(converted_name):
+                unconverted_files.append(html_file)
+                print(f"🔄 변환 대기: {os.path.basename(html_file)}")
+        
+        return unconverted_files
+    
     def convert_single_file(self, html_file_path: str) -> str:
         """단일 HTML 파일을 Excel로 변환"""
         try:
@@ -75,15 +92,19 @@ class HTMLToExcelConverter:
             print(f"❌ 변환 실패 ({os.path.basename(html_file_path)}): {e}")
             return None
     
-    def convert_all_files(self) -> List[str]:
+    def convert_all_files(self, force_all=False) -> List[str]:
         """모든 HTML 파일을 Excel로 변환"""
-        html_files = self.find_html_files()
+        if force_all:  # 수정: 강제 모든 파일 변환 옵션 추가
+            html_files = self.find_html_files()
+            print(f"\n📂 모든 HTML 파일 강제 변환 모드")
+        else:
+            html_files = self.find_unconverted_files()  # 수정: 변환되지 않은 파일만 처리
         
         if not html_files:
-            print("❌ 변환할 HTML 파일이 없습니다.")
+            print("✅ 모든 파일이 이미 변환되었습니다.")
             return []
         
-        print(f"\n📂 {len(html_files)}개의 HTML 파일을 발견했습니다.")
+        print(f"\n📂 {len(html_files)}개의 HTML 파일을 변환합니다.")
         print("🔄 일괄 변환을 시작합니다...\n")
         
         converted_count = 0
@@ -99,22 +120,39 @@ class HTMLToExcelConverter:
         print(f"\n=== 변환 완료 ===")
         print(f"✅ 성공: {converted_count}개")
         print(f"❌ 실패: {failed_count}개")
-        print(f"📁 변환된 파일들:")
         
-        for file_path in self.converted_files:
-            print(f"   - {os.path.basename(file_path)}")
+        if self.converted_files:
+            print(f"📁 새로 변환된 파일들:")
+            for file_path in self.converted_files:
+                print(f"   - {os.path.basename(file_path)}")
         
         return self.converted_files
     
+    def get_all_converted_files(self) -> List[str]:
+        """모든 변환된 파일 목록 반환"""  # 수정: 새로운 메서드 추가
+        converted_files = []
+        
+        if not os.path.exists(self.data_directory):
+            return converted_files
+        
+        for file in os.listdir(self.data_directory):
+            if file.endswith('_converted.xlsx'):
+                file_path = os.path.join(self.data_directory, file)
+                converted_files.append(file_path)
+        
+        return converted_files
+    
     def create_summary_report(self):
         """변환된 파일들의 요약 보고서 생성"""
-        if not self.converted_files:
+        all_converted_files = self.get_all_converted_files()  # 수정: 모든 변환된 파일 대상
+        
+        if not all_converted_files:
             print("❌ 변환된 파일이 없습니다.")
             return
         
         summary_data = []
         
-        for file_path in self.converted_files:
+        for file_path in all_converted_files:
             try:
                 # 파일명에서 정보 추출
                 file_name = os.path.basename(file_path)
@@ -151,7 +189,20 @@ class HTMLToExcelConverter:
             summary_df.to_excel(summary_path, index=False)
             
             print(f"\n📊 요약 보고서 생성: {summary_path}")
-            print(summary_df.to_string(index=False))
+            print(f"📋 총 {len(summary_data)}개 강의실 변환 완료")
+            
+            # 건물별 통계
+            building_stats = summary_df.groupby('건물').agg({
+                '호실': 'count',
+                '수용인원': ['min', 'max', 'mean']
+            }).round(1)
+            
+            print(f"\n🏢 건물별 통계:")
+            for building in summary_df['건물'].unique():
+                building_data = summary_df[summary_df['건물'] == building]
+                room_count = len(building_data)
+                avg_capacity = building_data['수용인원'].mean()
+                print(f"   {building}: {room_count}개 강의실, 평균 수용인원 {avg_capacity:.0f}명")
 
 
 class UniversalClassroomParserFixed:
@@ -177,19 +228,22 @@ class UniversalClassroomParserFixed:
         """HTML 파일들을 Excel로 변환"""
         print("🔍 HTML 파일 변환 확인 중...")
         
-        # 이미 변환된 파일들 확인
-        converted_files = []
-        if os.path.exists(self.data_directory):
-            for file in os.listdir(self.data_directory):
-                if file.endswith('_converted.xlsx'):
-                    converted_files.append(file)
+        # 변환되지 않은 파일들 확인 및 변환  # 수정: 로직 변경
+        unconverted_files = self.converter.find_unconverted_files()
         
-        if not converted_files:
-            print("📥 HTML 파일을 Excel로 변환합니다...")
-            self.converter.convert_all_files()
-            self.converter.create_summary_report()
+        if unconverted_files:
+            print(f"📥 {len(unconverted_files)}개의 새로운 HTML 파일을 Excel로 변환합니다...")
+            newly_converted = self.converter.convert_all_files()
+            
+            if newly_converted:
+                print(f"✅ {len(newly_converted)}개 파일 변환 완료")
+                self.converter.create_summary_report()
         else:
-            print(f"✅ 이미 변환된 파일 {len(converted_files)}개를 발견했습니다.")
+            print("✅ 모든 HTML 파일이 이미 Excel로 변환되었습니다.")
+            
+            # 전체 변환된 파일 개수 표시
+            all_converted = self.converter.get_all_converted_files()
+            print(f"📁 총 {len(all_converted)}개의 변환된 파일이 있습니다.")
     
     def _find_converted_file(self) -> str:
         """변환된 Excel 파일 중 301호실 파일 찾기"""
@@ -341,6 +395,24 @@ def main():
         print("pip install pandas openpyxl lxml html5lib")
         return
     
+    # 강제 모든 파일 변환 옵션 추가  # 수정: 사용자 선택 옵션
+    print("변환 모드를 선택하세요:")
+    print("1. 새로운 파일만 변환 (기본)")
+    print("2. 모든 파일 강제 재변환")
+    
+    try:
+        choice = input("선택 (1 또는 2, 기본값: 1): ").strip()
+        force_all = (choice == "2")
+    except:
+        force_all = False
+    
+    if force_all:
+        print("\n🔄 모든 파일 강제 재변환 모드를 선택했습니다.")
+        # 직접 변환기 실행
+        converter = HTMLToExcelConverter()
+        converter.convert_all_files(force_all=True)
+        converter.create_summary_report()
+    
     # 강의실 파서 초기화 (자동으로 HTML 변환 수행)
     parser = UniversalClassroomParserFixed()
     
@@ -359,8 +431,8 @@ def main():
     print(f"📅 첫 번째 데이터 날짜: {first_date}")
     
     # 10:00 시간대 상태 확인
-    status = parser.get_room_status_at_time(first_date, "10:00")
-    print(f"🕙 10:00 상태: {status}")
+    status = parser.get_room_status_at_time(first_date, "16:00")
+    print(f"🕙 16:00 상태: {status}")
     
     print(f"\n✅ HTML 파일들이 성공적으로 Excel로 변환되었습니다!")
     print(f"📁 변환된 파일들은 data 폴더에서 확인할 수 있습니다.")
